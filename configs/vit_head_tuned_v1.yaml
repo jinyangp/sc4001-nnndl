@@ -1,0 +1,19 @@
+model:
+  target: src.vit.vit_backbones.vit.ViT
+  params:
+    pretrained_model_weights: "IMAGENET1K_V1"
+    finetuned_keys: # keep adding all keys to be fine-tuned, each on a different line starting with '-'
+      - heads
+    loss_type: "cross_entropy"
+    use_scheduler: True
+    scheduler_config:
+      target: torch.optim.lr_scheduler.ReduceLROnPlateau
+      monitor: val/loss_simple_ema
+      params:
+        mode: min
+        factor: 0.5
+        patience: 3
+        cooldown: 0
+        min_lr: 0.00001
+        threshold: 0.001
+        verbose: True
