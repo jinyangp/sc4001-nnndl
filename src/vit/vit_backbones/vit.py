@@ -4,8 +4,10 @@ import torch.nn as nn
 import numpy as np
 import pytorch_lightning as pl
 from einops import rearrange, repeat
+from torch.optim.lr_scheduler import LambdaLR
 
-from src.util import get_acc
+from src.metrics import get_acc
+from src.util import instantiate_from_config
 
 class ViT(pl.LightningModule):
 
@@ -13,6 +15,9 @@ class ViT(pl.LightningModule):
                  pretrained_model_weights: str,
                  finetuned_keys: list[str],
                  loss_type: str='cross_entropy',
+                 scheduler_config=None,
+                 *args,
+                 **kwargs
                  ):
         
         '''
@@ -20,11 +25,14 @@ class ViT(pl.LightningModule):
             pretrained_model_ckpt: str, filepath to the checkpoint file
             finetuned_keys:
         '''
+
         super().__init__()
         self.init_from_ckpt(pretrained_model_weights,
                             finetuned_keys=finetuned_keys)
         self.loss_type = loss_type    
-
+        self.use_scheduler = scheduler_config is not None
+        if self.use_scheduler:
+            self.scheduler_config = scheduler_config
 
     def init_from_ckpt(self,
                        path,
@@ -73,6 +81,19 @@ class ViT(pl.LightningModule):
         lr = self.learning_rate
         params = list(self.model.parameters())
         opt = torch.optim.AdamW(params, lr)
+
+        if self.use_scheduler:
+            assert 'target' in self.scheduler_config
+            scheduler = instantiate_from_config(self.scheduler_config)
+
+            print("Setting up LambdaLR scheduler...")
+            scheduler = [
+                {
+                    'scheduler': LambdaLR(opt, lr_lambda=scheduler.schedule),
+                    'interval': 'step',
+                    'frequency': 1
+                }]
+            return [opt], scheduler
         return opt
 
 
