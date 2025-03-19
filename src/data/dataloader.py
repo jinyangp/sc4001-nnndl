@@ -17,7 +17,7 @@ from torchvision import transforms
 from random import randint
 
 def get_name(filename, label):
-    return 'fn-' + filename + '___' + 'label-' + label  
+    return 'fn-' + filename + '___' + 'label-' + str(label)  
 
 class Loader(Dataset):
     def __init__(self, shuffle=False):
@@ -60,6 +60,7 @@ class FlowersDataset(Loader):
         data_columns = ["img_fp", "label"]
         dfs = [pd.read_csv(f, names=data_columns, header=None) for f in data_files]
         self.df = pd.concat(dfs, ignore_index=True)
+        self.df["label"] = self.df["label"].astype(int)
 
         if sample_ratio:
             self.df = self.df.head(int(sample_ratio*len(self.df)))
@@ -97,11 +98,12 @@ class FlowersDataset(Loader):
             img_fp, label = row['img_fp'], row['label']
             fname = get_name(img_fp,label)
 
-            img_pil = Image.open(img_fp)
+            img_pil = Image.open(os.path.join(self.root, img_fp))
             image = self.data_transforms[self.dataset_split](img_pil)
             # NOTE: we make a one-hot encoded vector here
             label = torch.nn.functional.one_hot(torch.tensor([label]), num_classes=self.num_classes)
-
+            label = label.transpose(0,1).squeeze(1).float()
+ 
             return dict(image=image,
                         label=label,
                         fns=fname)

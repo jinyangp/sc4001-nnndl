@@ -86,7 +86,7 @@ def main(args):
                         default_root_dir=logdir,
                         # val_check_interval=1.0,
                         # val_check_interval=8000,
-                        check_val_every_n_epoch=3,
+                        check_val_every_n_epoch=1,
                         num_sanity_val_steps=1,
                         max_epochs=max_epochs,
                         )
@@ -98,7 +98,7 @@ def main(args):
                         default_root_dir=logdir,
                         # val_check_interval=1.0,
                         # val_check_interval=8000,
-                        check_val_every_n_epoch=3,
+                        check_val_every_n_epoch=1,
                         num_sanity_val_steps=1,
                         max_epochs=max_epochs,
                         )

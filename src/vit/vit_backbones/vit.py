@@ -4,7 +4,8 @@ import torch.nn as nn
 import numpy as np
 import pytorch_lightning as pl
 from einops import rearrange, repeat
-from torch.optim.lr_scheduler import LambdaLR
+from torch.optim.lr_scheduler import LambdaLR, ReduceLROnPlateau
+from collections import defaultdict
 
 from src.metrics import get_acc
 from src.util import instantiate_from_config
@@ -14,7 +15,8 @@ class ViT(pl.LightningModule):
     def __init__(self,
                  pretrained_model_weights: str,
                  finetuned_keys: list[str],
-                 loss_type: str='cross_entropy',
+                 loss_type: str ='cross_entropy',
+                 num_classes: int = 102,
                  scheduler_config=None,
                  *args,
                  **kwargs
@@ -27,12 +29,19 @@ class ViT(pl.LightningModule):
         '''
 
         super().__init__()
+
+        self.num_classes = num_classes  
         self.init_from_ckpt(pretrained_model_weights,
                             finetuned_keys=finetuned_keys)
         self.loss_type = loss_type    
         self.use_scheduler = scheduler_config is not None
         if self.use_scheduler:
             self.scheduler_config = scheduler_config
+
+        # NOTE: to store output of batches in test
+        self.test_outputs = None
+        self.validation_outputs = None
+
 
     def init_from_ckpt(self,
                        path,
@@ -46,7 +55,10 @@ class ViT(pl.LightningModule):
             finetuned_keys: list of keys to finetune
         '''
 
+        # STEP: Load pretrained weights
         self.model = torchvision.models.vit_b_16(weights=path)
+        
+        # STEP: Fine-tune all selected keys
         for name, param in self.model.named_parameters():
             for ftk in finetuned_keys:
                 if ftk in name:
@@ -54,10 +66,16 @@ class ViT(pl.LightningModule):
                 else:
                     param.requires_grad = False
 
+        # STEP: Modify head to fit our number of classes
+        num_ftrs = self.model.heads.head.in_features
+        self.model.heads.head = nn.Linear(num_ftrs, self.num_classes)
 
-    def get_loss(self, pred, target, mean=True):
+
+    def get_loss(self, pred, target, reduction="mean"):
         if self.loss_type == "cross_entropy":
-            loss = torch.nn.functional.cross_entropy(pred,target,reduction=mean)
+            # pred: torch.Size([16, 1000]), target: torch.Size([16, 102]) but currently torch.Size([16, 1, 102]
+            print(pred.shape, target.shape)
+            loss = torch.nn.functional.cross_entropy(pred,target,reduction=reduction)
         return loss
      
     
@@ -83,17 +101,20 @@ class ViT(pl.LightningModule):
         opt = torch.optim.AdamW(params, lr)
 
         if self.use_scheduler:
-            assert 'target' in self.scheduler_config
-            scheduler = instantiate_from_config(self.scheduler_config)
+            metric_monitored = self.scheduler_config.get("monitor", "val/loss")
+            if "monitor" in self.scheduler_config:
+                del self.scheduler_config["monitor"]
+            self.lr_scheduler = ReduceLROnPlateau(opt, **self.scheduler_config)
 
-            print("Setting up LambdaLR scheduler...")
-            scheduler = [
-                {
-                    'scheduler': LambdaLR(opt, lr_lambda=scheduler.schedule),
-                    'interval': 'step',
-                    'frequency': 1
-                }]
-            return [opt], scheduler
+            return {
+                "optimizer": opt,
+                "lr_scheduler": {
+                    "scheduler": self.lr_scheduler,
+                    "monitor": metric_monitored,
+                    "interval": "epoch",
+                    "frequency": 1,
+                }
+            }
         return opt
 
 
@@ -104,19 +125,23 @@ class ViT(pl.LightningModule):
 
         y_pred = self.model(X)
         loss = self.get_loss(y_pred, y)
-        acc = self.get_acc(y_pred, y)
+        acc = get_acc(y_pred, y)
 
         y_pred = torch.argmax(y_pred, dim=1, keepdim=True)
         target = torch.argmax(y, dim=1, keepdim=True)
         incorrect_indices = (torch.nonzero(y_pred != target, as_tuple=True)[0]).tolist()
         incorrect_samples = [(fns[i], y_pred[i], target[i]) for i in incorrect_indices]
-
-        return {
-            'loss': loss,
-            'acc': acc,
-            'incorrect_samples': incorrect_samples
-        }
         
+        if self.test_outputs is None:
+            self.test_outputs = {
+            'loss': [loss],
+            'acc': [acc],
+            'incorrect_samples': incorrect_samples
+            }       
+        else:
+            self.test_outputs['loss'].append(loss)
+            self.test_outputs['acc'].append(acc)
+            self.test_outputs['incorrect_samples'].extend(incorrect_samples)
 
     # ======================================
     def get_input(self, batch, bs=None):
@@ -141,26 +166,45 @@ class ViT(pl.LightningModule):
 
         # STEP: Calculate loss using get_loss
         y_pred = self.model(X)
-        loss = self.get_loss(y_pred, y).item()
+        loss = self.get_loss(y_pred, y)
         # STEP: Calculate accuracy
-        acc = self.get_acc(y_pred, y)
+        acc = get_acc(y_pred, y)
 
         # STEP: Log the items
         log_prefix = "train" if self.training else "val"
 
         loss_dict.update({f'{log_prefix}/loss': loss})
-        loss_dict.update({f'{log_prefix}/iou': acc.item()})
+        loss_dict.update({f'{log_prefix}/iou': acc})
 
         return loss, loss_dict
     
     
     def validation_step(self, batch, batch_idx):
-        _, loss_dict = self.shared_step(batch)
+        loss, loss_dict = self.shared_step(batch)
         self.log_dict(loss_dict, prog_bar=False, logger=True, on_step=False, on_epoch=True)
 
+        if self.validation_outputs is None:
+            self.validation_outputs = [loss]
+        else:
+            self.validation_outputs.append(loss)
 
-    def on_test_epoch_end(self, outputs):
 
+    def on_validation_epoch_end(self):
+
+        """Aggregates validation losses and logs epoch-level metrics."""
+        outputs = self.validation_outputs
+        num_batches = len(outputs)
+        avg_val_loss = sum(outputs)/num_batches
+
+        if self.use_scheduler:
+            self.lr_schedulers.step(avg_val_loss)
+    
+        self.validation_outputs = None # resets the output to None for next epoch
+
+
+    def on_test_epoch_end(self):
+
+        outputs = self.test_outputs
         num_batches = len(outputs)
         ep_loss = sum([tmp['loss'] for tmp in outputs])/num_batches
         ep_acc = sum([tmp['acc'] for tmp in outputs])/num_batches
