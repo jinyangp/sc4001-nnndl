@@ -7,8 +7,13 @@
 #SBATCH --mem=24G 
 #SBATCH --job-name=test 
 #SBATCH --time=360
-#SBATCH --output=output_%x_%j.out 
-#SBATCH --error=error_%x_%j.err 
+
+LOG_DIR="$PWD/logs"
+mkdir -p $LOG_DIR
+
+#SBATCH --output=$LOG_DIR/output_%x_%j.out
+#SBATCH --error=$LOG_DIR/error_%x_%j.err
+
   
 module load anaconda 
 source activate base # ( this would activate your conda base env )
