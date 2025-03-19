@@ -74,7 +74,6 @@ class ViT(pl.LightningModule):
     def get_loss(self, pred, target, reduction="mean"):
         if self.loss_type == "cross_entropy":
             # pred: torch.Size([16, 1000]), target: torch.Size([16, 102]) but currently torch.Size([16, 1, 102]
-            print(pred.shape, target.shape)
             loss = torch.nn.functional.cross_entropy(pred,target,reduction=reduction)
         return loss
      
@@ -169,12 +168,11 @@ class ViT(pl.LightningModule):
         loss = self.get_loss(y_pred, y)
         # STEP: Calculate accuracy
         acc = get_acc(y_pred, y)
-
         # STEP: Log the items
         log_prefix = "train" if self.training else "val"
 
         loss_dict.update({f'{log_prefix}/loss': loss})
-        loss_dict.update({f'{log_prefix}/iou': acc})
+        loss_dict.update({f'{log_prefix}/acc': acc})
 
         return loss, loss_dict
     
@@ -197,7 +195,7 @@ class ViT(pl.LightningModule):
         avg_val_loss = sum(outputs)/num_batches
 
         if self.use_scheduler:
-            self.lr_schedulers.step(avg_val_loss)
+            self.lr_scheduler.step(avg_val_loss)
     
         self.validation_outputs = None # resets the output to None for next epoch
 

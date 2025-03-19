@@ -12,8 +12,8 @@ def get_acc(pred, target):
 
     N = pred.shape[0]
     # (B, num_cls) -> (B,1)
-    pred = torch.argmax(pred, dim=1, keepdim=True)
+    pred = torch.argmax(pred, dim=1)
     # (B, num_cls) -> (B,1)
-    target = torch.argmax(pred, dim=1, keepdim=True)
-    num_correct = torch.sum(pred.squeeze() == target.squeeze()).item()  # Remove extra dimension
+    target = torch.argmax(target, dim=1)
+    num_correct = torch.sum(pred == target).item()  # Remove extra dimension
     return num_correct/N

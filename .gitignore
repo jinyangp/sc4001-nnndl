@@ -178,3 +178,5 @@ misc/*
 
 # Do not ignore src/data folder
 !src/data/
+
+logs/

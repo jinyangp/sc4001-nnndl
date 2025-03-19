@@ -72,8 +72,8 @@ def main(args):
     setup_cb = SetupCallback(logdir=logdir, ckptdir=logdir, cfgdir=logdir, config=config)
     save_cb = ModelCheckpoint(dirpath=logdir,
                             save_last=True,
-                            every_n_train_steps=8000, 
-                            monitor='val/loss_simple_ema')
+                            every_n_train_steps=250, 
+                            monitor='val/loss')
     lr_monitor_cb = LearningRateMonitor(logging_interval='step')
     callbacks = [save_cb, setup_cb, lr_monitor_cb]
 
