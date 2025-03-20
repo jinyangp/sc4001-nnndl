@@ -172,3 +172,11 @@ cython_debug/
 
 # PyPI configuration file
 .pypirc
+
+misc/*
+/data/
+
+# Do not ignore src/data folder
+!src/data/
+
+logs/
