@@ -7,6 +7,7 @@ from torch import nn
 import pytorch_lightning as pl
 from torch.utils.data import DataLoader
 from pytorch_lightning.callbacks import ModelCheckpoint, Callback, LearningRateMonitor
+from pytorch_lightning.loggers import TensorBoardLogger
 from pytorch_lightning.strategies import DDPStrategy
 from src.util import create_model, load_state_dict, instantiate_from_config
 
@@ -77,6 +78,8 @@ def main(args):
     lr_monitor_cb = LearningRateMonitor(logging_interval='step')
     callbacks = [save_cb, setup_cb, lr_monitor_cb]
 
+    tb_logger = TensorBoardLogger(logdir, name='tensorboard_logs')
+
     # strategy = "ddp" if num_gpus > 1 else "auto"
     if num_gpus > 1:
         trainer = pl.Trainer(accelerator="gpu", devices=gpus, strategy="ddp",
@@ -89,6 +92,7 @@ def main(args):
                         check_val_every_n_epoch=1,
                         num_sanity_val_steps=1,
                         max_epochs=max_epochs,
+                        logger=tb_logger
                         )
     else:
         trainer = pl.Trainer(accelerator="gpu", devices=gpus,
@@ -101,6 +105,7 @@ def main(args):
                         check_val_every_n_epoch=1,
                         num_sanity_val_steps=1,
                         max_epochs=max_epochs,
+                        logger=tb_logger
                         )
 
     # Train!
