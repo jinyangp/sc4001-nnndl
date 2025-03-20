@@ -37,7 +37,7 @@ class PromptedViT(ViT):
         self.num_encoder_layers = len(self.model.encoder.layers) # number of transformer encoder layers
 
         prompt_embeddings = nn.Parameter(torch.zeros(1, self.num_tokens, self.hidden_dim)) # e.g, (1,4,768)
-        val = math.sqrt(6. / float(3 * reduce(mul, self.model.patch_size, 1) + self.hidden_dim))  # noqa
+        val = math.sqrt(6. / float(3 * reduce(mul, (self.model.patch_size, self.model.patch_size), 1) + self.hidden_dim))  # noqa
         # xavier_uniform initialization
         nn.init.uniform_(prompt_embeddings.data, -val, val)
 
@@ -113,7 +113,7 @@ class PromptedViT(ViT):
             x = self.heads(x)
             return x
 
- 
+
 # TODO: Not yet implemented yet!
 # class PromptedViTResampled(ViT):
 
