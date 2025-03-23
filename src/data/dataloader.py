@@ -49,6 +49,7 @@ class FlowersDataset(Loader):
                  data_files:list,
                  dataset_split:str='train',
                  sample_ratio=None, # ratio of entire dataset to sample from
+                 mixup_alpha=0.4, # medium alpha provides balanced mixup (recommended)
                  **kwargs
                  ):
         
@@ -91,6 +92,16 @@ class FlowersDataset(Loader):
     def __len__(self):
         return len(self.df)
     
+    def mixup(self, image1, label1, image2, label2):
+        # Sample lambda between 0 and 1 from Beta distribution 
+        lam = np.random.beta(self.mixup_alpha, self.mixup_alpha)
+
+        # Mix images and labels
+        mixed_image = lam * image1 + (1 - lam) * image2
+        mixed_label = lam * label1 + (1 - lam) * label2
+
+        return mixed_image, mixed_label
+    
     def __getitem__(self, index):
         
         try:
@@ -98,12 +109,29 @@ class FlowersDataset(Loader):
             img_fp, label = row['img_fp'], row['label']
             fname = get_name(img_fp,label)
 
+            # Load main image
             img_pil = Image.open(os.path.join(self.root, img_fp))
             image = self.data_transforms[self.dataset_split](img_pil)
-            # NOTE: we make a one-hot encoded vector here
+            
+            # One-hot encode label
             label = torch.nn.functional.one_hot(torch.tensor([label]), num_classes=self.num_classes)
             label = label.transpose(0,1).squeeze(1).float()
- 
+
+            # Apply mixup only during training
+            if self.dataset_split == 'train' and self.mixup_alpha > 0:
+                # Load second image to mix with
+                sample = self.random_sample()
+                image2, label2 = sample['image'], sample['label']
+                
+                img_pil2 = Image.open(os.path.join(self.root, image2))
+                image2 = self.data_transforms[self.dataset_split](img_pil2)
+                
+                label2 = torch.nn.functional.one_hot(torch.tensor([label2]), num_classes=self.num_classes)
+                label2 = label2.transpose(0, 1).squeeze(1).float()
+                
+                # Perform mixup
+                image, label = self.mixup(image, label, image2, label2)
+                
             return dict(image=image,
                         label=label,
                         fns=fname)
