@@ -8,7 +8,6 @@ import pytorch_lightning as pl
 from torch.utils.data import DataLoader
 from pytorch_lightning.callbacks import ModelCheckpoint, Callback, LearningRateMonitor
 from pytorch_lightning.loggers import TensorBoardLogger
-from pytorch_lightning.strategies import DDPStrategy
 from src.util import create_model, load_state_dict, instantiate_from_config
 
 class SetupCallback(Callback):  
