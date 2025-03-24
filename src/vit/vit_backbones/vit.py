@@ -120,17 +120,28 @@ class ViT(pl.LightningModule):
     def test_step(self, batch, batch_idx):
                 
         inps = self.get_input(batch)
-        X, y, fns = inps['X'], inps['y'], inps['fns']
+        X, y, fns = inps['X'], inps['y'], inps['fn'][0]
+        X = torch.cat(inps["X"], 1)
+        y = torch.cat(inps["y"], 1)
 
         y_pred = self.model(X)
-        loss = self.get_loss(y_pred, y)
+        loss = self.get_loss(y_pred, y).item()
         acc = get_acc(y_pred, y)
 
-        y_pred = torch.argmax(y_pred, dim=1, keepdim=True)
-        target = torch.argmax(y, dim=1, keepdim=True)
-        incorrect_indices = (torch.nonzero(y_pred != target, as_tuple=True)[0]).tolist()
-        incorrect_samples = [(fns[i], y_pred[i], target[i]) for i in incorrect_indices]
+        y_pred = torch.argmax(y_pred, dim=1)
+        target = torch.argmax(y, dim=1)
+        incorrect_indices = torch.nonzero(y_pred != target).squeeze().tolist()
+        y_pred = y_pred.tolist()
+        target = target.tolist()
+
+        if not isinstance(incorrect_indices, list):
+            incorrect_indices = [incorrect_indices]
         
+        if len(incorrect_indices) > 0:
+            incorrect_samples = [(fns[i], y_pred[i], target[i]) for i in incorrect_indices]
+        else:
+            incorrect_samples = []
+
         if self.test_outputs is None:
             self.test_outputs = {
             'loss': [loss],
@@ -140,7 +151,8 @@ class ViT(pl.LightningModule):
         else:
             self.test_outputs['loss'].append(loss)
             self.test_outputs['acc'].append(acc)
-            self.test_outputs['incorrect_samples'].extend(incorrect_samples)
+            if len(incorrect_samples) > 0:
+                self.test_outputs['incorrect_samples'] = self.test_outputs['incorrect_samples'] + incorrect_samples
 
     # ======================================
     def get_input(self, batch, bs=None):
@@ -160,7 +172,6 @@ class ViT(pl.LightningModule):
         # STEP: Get the inputs from the batches
         inps = self.get_input(batch)
         X = torch.cat(inps["X"], 1)
-        # NOTE: Initially y is of shape [B,1]; need to expand to [B,num_cls]
         y = torch.cat(inps["y"], 1)
 
         # STEP: Calculate loss using get_loss
@@ -203,11 +214,12 @@ class ViT(pl.LightningModule):
     def on_test_epoch_end(self):
 
         outputs = self.test_outputs
-        num_batches = len(outputs)
-        ep_loss = sum([tmp['loss'] for tmp in outputs])/num_batches
-        ep_acc = sum([tmp['acc'] for tmp in outputs])/num_batches
-        incorrect_samples = []
-        incorrect_samples = incorrect_samples.extend([tmp['incorrect_samples'] for tmp in outputs])
+        print(outputs)
+
+        num_batches = len(outputs['loss'])
+        ep_loss = sum([loss_ for loss_ in outputs['loss']])/num_batches
+        ep_acc = sum([acc_ for acc_ in outputs['acc']])/num_batches
+        incorrect_samples = outputs['incorrect_samples']
 
         print(f'Test loss: {ep_loss}, Test acc: {ep_acc}')
         for sample in incorrect_samples:
