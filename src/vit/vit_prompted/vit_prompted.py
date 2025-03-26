@@ -14,40 +14,7 @@ from src.metrics import get_acc
 from src.util import instantiate_from_config
 from src.vit.vit_backbones.vit import ViT
 
-class PromptedViT(ViT):
-
-    def __init__(self,
-                 num_prompt_tokens:int=4,
-                 prompt_depth:str='shallow',
-                 prompt_dropout:float=0.0,
-                 *args,
-                 **kwargs):
-        
-        '''
-        Args:
-            num_prompt_token: int, number of additional tokens to prompt the ViT with
-            prompt_depth: str of either ['shallow'/'deep'], if shallow, only inject embeddings at first encoder layer else at every layer
-        '''
-
-        super().__init__(*args, **kwargs)
-    
-        self.num_tokens = num_prompt_tokens
-        self.hidden_dim = self.model.hidden_dim
-        self.prompt_depth = prompt_depth #
-        self.num_encoder_layers = len(self.model.encoder.layers) # number of transformer encoder layers
-
-        prompt_embeddings = nn.Parameter(torch.zeros(1, self.num_tokens, self.hidden_dim)) # e.g, (1,4,768)
-        val = math.sqrt(6. / float(3 * reduce(mul, (self.model.patch_size, self.model.patch_size), 1) + self.hidden_dim))  # noqa
-        # xavier_uniform initialization
-        nn.init.uniform_(prompt_embeddings.data, -val, val)
-
-        if self.prompt_depth == "deep":
-            # +1 for the initial input to the stack of transformer encoder blocks
-            self.prompt_embeddings = prompt_embeddings.repeat(self.num_encoder_layers+1,1,1)
-        else:
-            self.prompt_embeddings = prompt_embeddings
-
-        self.prompt_dropout = prompt_dropout
+class PromptedViTBackbone(ViT):
 
     def shallow_incorporate_prompt(self, x, prompt_embeddings):
 
@@ -94,6 +61,42 @@ class PromptedViT(ViT):
         return x
     
 
+class PromptedViT(PromptedViTBackbone):
+    
+    def __init__(self,
+                 num_prompt_tokens:int=4,
+                 prompt_depth:str='shallow',
+                 prompt_dropout:float=0.0,
+                 *args,
+                 **kwargs):
+        
+        '''
+        Args:
+            num_prompt_token: int, number of additional tokens to prompt the ViT with
+            prompt_depth: str of either ['shallow'/'deep'], if shallow, only inject embeddings at first encoder layer else at every layer
+        '''
+
+        super().__init__(*args, **kwargs)
+    
+        self.num_tokens = num_prompt_tokens
+        self.hidden_dim = self.model.hidden_dim
+        self.prompt_depth = prompt_depth #
+        self.num_encoder_layers = len(self.model.encoder.layers) # number of transformer encoder layers
+
+        prompt_embeddings = nn.Parameter(torch.zeros(1, self.num_tokens, self.hidden_dim)) # e.g, (1,4,768)
+        val = math.sqrt(6. / float(3 * reduce(mul, (self.model.patch_size, self.model.patch_size), 1) + self.hidden_dim))  # noqa
+        # xavier_uniform initialization
+        nn.init.uniform_(prompt_embeddings.data, -val, val)
+
+        if self.prompt_depth == "deep":
+            # If deep, we replicate the prompt embeddings across all encoder layers (+1 for input layer)
+            self.prompt_embeddings = nn.Parameter(prompt_embeddings.repeat(self.num_encoder_layers, 1, 1))
+        else:
+            self.prompt_embeddings = nn.Parameter(prompt_embeddings)
+
+        self.prompt_dropout = prompt_dropout
+
+
     def forward(self, x, *args, **kwargs):
 
         if self.prompt_depth == "shallow":
@@ -104,28 +107,173 @@ class PromptedViT(ViT):
         # NOTE: Each encoder layer outputs only one output, x
         elif self.prompt_depth == "deep":
             x = self.shallow_incorporate_prompt(x, self.prompt_embeddings[0])
-            for i in range(self.num_encoder_layers):
-                x = self.model.encoder.layers[i]
-                prompt_embeds = self.prompt_embeddings[i+1]
+            x = self.model.encoder.layers[0](x)
+            for i in range(1, self.num_encoder_layers):
+                # STEP: Get the corresponding encoder layer
+                encoder_layer = self.model.encoder.layers[i]
+                # STEP: Integrate prompt with previous encoder layer output
+                prompt_embeds = self.prompt_embeddings[i]
                 x = self.deep_incorporate_prompt(x, prompt_embeds)
+                # STEP: Forward pass into this encoder layer
+                x = encoder_layer(x)
             # get classifier CLS token
             x = x[:,0]
             x = self.heads(x)
             return x
 
 
-# TODO: Not yet implemented yet!
-# class PromptedViTResampled(ViT):
+    def configure_optimizers(self):
 
-#     def __init__(self,
-#                 num_prompt_tokens:int=4,
-#                 token_method:str='random',
-#                 token_resampler_config=None,
-#                 prompt_depth:str='shallow',
-#                 *args,
-#                 **kwargs):
+        lr = self.learning_rate
+        params = self.parameters()
+        opt = torch.optim.AdamW(params, lr)
+
+        if self.use_scheduler:
+            metric_monitored = self.scheduler_config.get("monitor", "val/loss")
+            if "monitor" in self.scheduler_config:
+                del self.scheduler_config["monitor"]
+            self.lr_scheduler = ReduceLROnPlateau(opt, **self.scheduler_config)
+
+            return {
+                "optimizer": opt,
+                "lr_scheduler": {
+                    "scheduler": self.lr_scheduler,
+                    "monitor": metric_monitored,
+                    "interval": "epoch",
+                    "frequency": 1,
+                }
+            }
+        return opt
+
+
+class PromptedViTResampler(PromptedViTBackbone):
     
-#         # TODO: Not yet implemented
-#         # NOTE: in this method, the tokens are added during the forward pass itself
-#         self.resampler = instantiate_from_config(token_resampler_config)
-#         raise NotImplementedError
+    def __init__(self,
+                 num_prompt_tokens:int=4,
+                 prompt_depth:str='shallow',
+                 prompt_dropout:float=0.0,
+                 prompt_resampler_config=None,
+                 *args,
+                 **kwargs):
+
+        super().__init__(*args, **kwargs)
+    
+        self.num_tokens = num_prompt_tokens
+        self.prompt_depth = prompt_depth
+        self.prompt_dropout = prompt_dropout
+
+        self.hidden_dim = self.model.hidden_dim
+        self.num_encoder_layers = len(self.model.encoder.layers) # number of transformer encoder layers
+
+
+    def get_input(self, batch, bs=None):
+ 
+        # NOTE: We need to pass in the prompt embeddings here based on each image in
+        # the batch
+        if bs is not None:
+            for k in batch.keys():
+                batch[k] = batch[k][:bs]
+
+        ret_dict = dict(X=[batch['image']], y=[batch['label']], fn=[batch['fns']])
+        img_pils = batch["X_pil"]
+        prompt_embeds = []
+        
+        for img in img_pils:
+            # NOTE: our self.prompt_embed_model should take in an image
+            # PIL image -> (1, num_tokens, token_dim) if depth == "shallow" else (num_layers, num_tokens, token_dim)
+            embeds = self.prompt_embed_model(img)
+            if self.prompt_depth == "deep":
+                embeds = embeds.repeat(self.num_encoder_layers+1,1,1)
+            prompt_embeds.append(embeds)
+        # (1, num_tokens, token_dim) if depth == "shallow" else (num_layers, num_tokens, token_dim) -> (B, 1, num_tokens, token_dim) if depth == "shallow" else (B, num_layers, num_tokens, token_dim)
+        ret_dict['prompt_embed'] = [torch.stack(prompt_embeds,dim=0)]
+
+        return ret_dict
+
+
+    def forward(self, x, prompt_embeds=None, *args, **kwargs):
+
+        if self.prompt_depth == "shallow":
+            x = self.shallow_incorporate_prompt(x, prompt_embeds[0])
+            x = self.model(x)
+            return x
+        
+        # NOTE: Each encoder layer outputs only one output, x
+        elif self.prompt_depth == "deep":
+            x = self.shallow_incorporate_prompt(x, prompt_embeds[0])
+            x = self.model.encoder.layers[0](x)
+            for i in range(1, self.num_encoder_layers):
+                # STEP: Get the corresponding encoder layer
+                encoder_layer = self.model.encoder.layers[i]
+                # STEP: Integrate prompt with previous encoder layer output
+                embeds = prompt_embeds[i]
+                x = self.deep_incorporate_prompt(x, embeds)
+                # STEP: Forward pass into this encoder layer
+                x = encoder_layer(x)
+            # get classifier CLS token
+            x = x[:,0]
+            x = self.heads(x)
+            return x
+
+
+    def shared_step(self, batch):
+        
+        loss_dict = {}
+        
+        # STEP: Get the inputs from the batches
+        inps = self.get_input(batch)
+        X = torch.cat(inps["X"], 1)
+        prompt_embed = torch.cat(inps["prompt_embed"], 1)
+        y = torch.cat(inps["y"], 1)  
+
+        # STEP: Calculate loss using get_loss
+        y_pred = self.model(X, prompt_embeds=prompt_embed)
+        loss = self.get_loss(y_pred, y)
+        # STEP: Calculate accuracy
+        acc = get_acc(y_pred, y)
+        # STEP: Log the items
+        log_prefix = "train" if self.training else "val"
+
+        loss_dict.update({f'{log_prefix}/loss': loss})
+        loss_dict.update({f'{log_prefix}/acc': acc})
+
+        return loss, loss_dict
+
+
+    def test_step(self, batch, batch_idx):
+
+        inps = self.get_input(batch)
+        X, prompts, y, fns = inps['X'], inps['prompt_embed'], inps['y'], inps['fn'][0]
+        X = torch.cat(inps["X"], 1)
+        y = torch.cat(inps["y"], 1)
+        prompts = torch.cat(inps["prompt_embed"], 1)
+
+        y_pred = self.model(X, prompt_embeds=prompts)
+        loss = self.get_loss(y_pred, y).item()
+        acc = get_acc(y_pred, y)
+
+        y_pred = torch.argmax(y_pred, dim=1)
+        target = torch.argmax(y, dim=1)
+        incorrect_indices = torch.nonzero(y_pred != target).squeeze().tolist()
+        y_pred = y_pred.tolist()
+        target = target.tolist()
+
+        if not isinstance(incorrect_indices, list):
+            incorrect_indices = [incorrect_indices]
+        
+        if len(incorrect_indices) > 0:
+            incorrect_samples = [(fns[i], y_pred[i], target[i]) for i in incorrect_indices]
+        else:
+            incorrect_samples = []
+
+        if self.test_outputs is None:
+            self.test_outputs = {
+            'loss': [loss],
+            'acc': [acc],
+            'incorrect_samples': incorrect_samples
+            }       
+        else:
+            self.test_outputs['loss'].append(loss)
+            self.test_outputs['acc'].append(acc)
+            if len(incorrect_samples) > 0:
+                self.test_outputs['incorrect_samples'] = self.test_outputs['incorrect_samples'] + incorrect_samples        
