@@ -8,7 +8,9 @@ import pytorch_lightning as pl
 from torch.utils.data import DataLoader
 from pytorch_lightning.callbacks import ModelCheckpoint, Callback, LearningRateMonitor
 from pytorch_lightning.loggers import TensorBoardLogger
+
 from src.util import create_model, load_state_dict, instantiate_from_config
+from src.data.dataloader import custom_collate_fn
 
 class SetupCallback(Callback):  
     def __init__(self, logdir, ckptdir, cfgdir, config):
@@ -64,8 +66,8 @@ def main(args):
     # data
     dataset = instantiate_from_config(config.dataset.train)
     val_dataset = instantiate_from_config(config.dataset.val)
-    dataloader = DataLoader(dataset, num_workers=num_workers, batch_size=batch_size, shuffle=True, pin_memory=True)
-    val_dataloader = DataLoader(val_dataset, num_workers=num_workers, batch_size=batch_size, shuffle=True, pin_memory=True)
+    dataloader = DataLoader(dataset, num_workers=num_workers, batch_size=batch_size, collate_fn=custom_collate_fn, shuffle=True, pin_memory=True)
+    val_dataloader = DataLoader(val_dataset, num_workers=num_workers, batch_size=batch_size, collate_fn=custom_collate_fn,  shuffle=True, pin_memory=True)
     # set to False if want to investigate repeated generation over the same image
         
     # callbacks

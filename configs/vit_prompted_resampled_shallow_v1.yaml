@@ -1,0 +1,67 @@
+model:
+  target: src.vit.vit_prompted.vit_prompted.PromptedViTResampled
+  params:
+    pretrained_model_weights: "IMAGENET1K_V1"
+    finetuned_keys: # keep adding all keys to be fine-tuned, each on a different line starting with '-'
+      - heads
+    loss_type: "cross_entropy"
+    num_classes: 102
+    use_scheduler: True
+    scheduler_config:
+      monitor: val/loss
+      mode: min
+      factor: 0.5
+      patience: 3
+      cooldown: 0
+      min_lr: 0.00001
+      threshold: 0.001
+      verbose: True
+    num_prompt_tokens: 4
+    prompt_depth: "shallow"
+    prompt_dropout: 0.0
+    prompt_resampler_config:
+      target: src.vit.vit_prompted.resampler.EncodingResampler
+      params:
+        dim: 1024
+        depth: 8
+        dim_head: 64
+        heads: 16
+        num_queries: 16
+        embedding_dim: 768
+        output_dim: 768 # the image embedding dimensions used in the ViT
+        ff_mult: 4
+        max_input_seq_len: 257
+        apply_pos_emb: True
+        image_encoder_config:
+          target: src.vit.vit_prompted.encoder.DINOImageEncoder
+          params:
+            encoder_type: "DINO"
+            encoder_processor_name: "facebook/dinov2-base"
+            encoder_model_name: "facebook/dinov2-base"
+dataset:
+  train:
+    target: src.data.dataloader.FlowersDataset
+    params:
+      image_root: "./data"
+      image_dir: "flowers-102"
+      data_files:
+        - "./data/train_images.txt"
+      dataset_split: "train"
+
+  val:
+    target: src.data.dataloader.FlowersDataset
+    params:
+      image_root: "./data"
+      image_dir: "flowers-102"
+      data_files:
+        - "./data/val_images.txt"
+      dataset_split: "val"
+
+  test:
+    target: src.data.dataloader.FlowersDataset
+    params:
+      image_root: "./data"
+      image_dir: "flowers-102"
+      data_files:
+        - "./data/test_images.txt"
+      dataset_split: "test"

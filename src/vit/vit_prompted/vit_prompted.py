@@ -16,7 +16,7 @@ from src.vit.vit_backbones.vit import ViT
 
 class PromptedViTBackbone(ViT):
 
-    def shallow_incorporate_prompt(self, x, prompt_embeddings):
+    def shallow_incorporate_prompt(self, x, prompt_embeddings, expand_batch_dim=True):
 
         '''
         To incorporate prompts at the first transformer encoder layer
@@ -28,9 +28,14 @@ class PromptedViTBackbone(ViT):
         B = x.shape[0]
         x = self.model._process_input(x) # get the image patches
         batch_class_token = self.model.class_token.expand(B, -1, -1)
+        if expand_batch_dim:
+            prompt_embeddings = prompt_embeddings.expand(B, -1, -1)
+
+        # print(x.shape, prompt_embeddings.shape, batch_class_token.shape)
+
         x = torch.cat((
             batch_class_token,
-            self.prompt_dropout(prompt_embeddings.expand(B, -1, -1)),
+            self.prompt_dropout(prompt_embeddings),
             x
         ), dim=1)
 
@@ -38,7 +43,7 @@ class PromptedViTBackbone(ViT):
         return x
     
 
-    def deep_incorporate_prompt(self, x, prompt_embeddings):
+    def deep_incorporate_prompt(self, x, prompt_embeddings, expand_batch_dim=True):
        
         '''
         To incorporate prompts at deeper transformer encoder layer. The aim here is to incorporate prompts of each specific layer to the previous layer's output.
@@ -51,9 +56,11 @@ class PromptedViTBackbone(ViT):
         
         batch_class_token = x[:,:1,:]
         image_patch_tokens = x[:,(1+self.num_tokens):,:]
+        if expand_batch_dim:
+            prompt_embeddings = prompt_embeddings.expand(B, -1, -1)
         x = torch.cat((
             batch_class_token,
-            self.prompt_dropout(prompt_embeddings.expand(B, -1, -1)),
+            self.prompt_dropout(prompt_embeddings),
             image_patch_tokens
         ), dim=1)
 
@@ -80,7 +87,7 @@ class PromptedViT(PromptedViTBackbone):
     
         self.num_tokens = num_prompt_tokens
         self.hidden_dim = self.model.hidden_dim
-        self.prompt_depth = prompt_depth #
+        self.prompt_depth = prompt_depth 
         self.num_encoder_layers = len(self.model.encoder.layers) # number of transformer encoder layers
 
         prompt_embeddings = nn.Parameter(torch.zeros(1, self.num_tokens, self.hidden_dim)) # e.g, (1,4,768)
@@ -89,20 +96,22 @@ class PromptedViT(PromptedViTBackbone):
         nn.init.uniform_(prompt_embeddings.data, -val, val)
 
         if self.prompt_depth == "deep":
+            # shape: [num_encoder_layer, num_tokens, hidden_dim]
             # If deep, we replicate the prompt embeddings across all encoder layers (+1 for input layer)
             self.prompt_embeddings = nn.Parameter(prompt_embeddings.repeat(self.num_encoder_layers, 1, 1))
         else:
             self.prompt_embeddings = nn.Parameter(prompt_embeddings)
 
-        self.prompt_dropout = prompt_dropout
+        self.prompt_dropout = nn.Dropout(prompt_dropout)
 
 
     def forward(self, x, *args, **kwargs):
 
         if self.prompt_depth == "shallow":
             x = self.shallow_incorporate_prompt(x, self.prompt_embeddings[0])
-            x = self.model(x)
-            return x
+            x = self.model.encoder.layers(x)
+            x = x[:,0]
+            x = self.model.heads(x)
         
         # NOTE: Each encoder layer outputs only one output, x
         elif self.prompt_depth == "deep":
@@ -118,7 +127,7 @@ class PromptedViT(PromptedViTBackbone):
                 x = encoder_layer(x)
             # get classifier CLS token
             x = x[:,0]
-            x = self.heads(x)
+            x = self.model.heads(x)
             return x
 
 
@@ -146,7 +155,7 @@ class PromptedViT(PromptedViTBackbone):
         return opt
 
 
-class PromptedViTResampler(PromptedViTBackbone):
+class PromptedViTResampled(PromptedViTBackbone):
     
     def __init__(self,
                  num_prompt_tokens:int=4,
@@ -160,11 +169,14 @@ class PromptedViTResampler(PromptedViTBackbone):
     
         self.num_tokens = num_prompt_tokens
         self.prompt_depth = prompt_depth
-        self.prompt_dropout = prompt_dropout
+        self.prompt_dropout = nn.Dropout(prompt_dropout)
 
         self.hidden_dim = self.model.hidden_dim
         self.num_encoder_layers = len(self.model.encoder.layers) # number of transformer encoder layers
 
+        if prompt_resampler_config is not None:
+            self.use_prompt_embed_model = True
+            self.prompt_embed_model = instantiate_from_config(prompt_resampler_config)
 
     def get_input(self, batch, bs=None):
  
@@ -175,15 +187,14 @@ class PromptedViTResampler(PromptedViTBackbone):
                 batch[k] = batch[k][:bs]
 
         ret_dict = dict(X=[batch['image']], y=[batch['label']], fn=[batch['fns']])
-        img_pils = batch["X_pil"]
+        img_pils = batch["image_pil"]
         prompt_embeds = []
         
         for img in img_pils:
             # NOTE: our self.prompt_embed_model should take in an image
             # PIL image -> (1, num_tokens, token_dim) if depth == "shallow" else (num_layers, num_tokens, token_dim)
+            # shape: 
             embeds = self.prompt_embed_model(img)
-            if self.prompt_depth == "deep":
-                embeds = embeds.repeat(self.num_encoder_layers+1,1,1)
             prompt_embeds.append(embeds)
         # (1, num_tokens, token_dim) if depth == "shallow" else (num_layers, num_tokens, token_dim) -> (B, 1, num_tokens, token_dim) if depth == "shallow" else (B, num_layers, num_tokens, token_dim)
         ret_dict['prompt_embed'] = [torch.stack(prompt_embeds,dim=0)]
@@ -192,27 +203,33 @@ class PromptedViTResampler(PromptedViTBackbone):
 
 
     def forward(self, x, prompt_embeds=None, *args, **kwargs):
-
+        
+        # (b, num_layers, num_tokens, token_dim) -> (num_layers, b, num_tokens, token_dim)
+        prompt_embeds = prompt_embeds.permute(1,0,2,3)
+        
         if self.prompt_depth == "shallow":
-            x = self.shallow_incorporate_prompt(x, prompt_embeds[0])
-            x = self.model(x)
+            x = self.shallow_incorporate_prompt(x, prompt_embeds[0], expand_batch_dim=False)
+            x = self.model.encoder.layers(x)
+            x = x[:,0]
+            x = self.model.heads(x)            
             return x
         
         # NOTE: Each encoder layer outputs only one output, x
         elif self.prompt_depth == "deep":
-            x = self.shallow_incorporate_prompt(x, prompt_embeds[0])
+            prompt_embeds = prompt_embeds.repeat(self.num_encoder_layers, 1, 1, 1)
+            x = self.shallow_incorporate_prompt(x, prompt_embeds[0], expand_batch_dim=False)
             x = self.model.encoder.layers[0](x)
             for i in range(1, self.num_encoder_layers):
                 # STEP: Get the corresponding encoder layer
                 encoder_layer = self.model.encoder.layers[i]
                 # STEP: Integrate prompt with previous encoder layer output
                 embeds = prompt_embeds[i]
-                x = self.deep_incorporate_prompt(x, embeds)
+                x = self.deep_incorporate_prompt(x, embeds, expand_batch_dim=False)
                 # STEP: Forward pass into this encoder layer
                 x = encoder_layer(x)
             # get classifier CLS token
             x = x[:,0]
-            x = self.heads(x)
+            x = self.model.heads(x)
             return x
 
 
@@ -223,11 +240,12 @@ class PromptedViTResampler(PromptedViTBackbone):
         # STEP: Get the inputs from the batches
         inps = self.get_input(batch)
         X = torch.cat(inps["X"], 1)
+        # when using shallow, get shape of prompt_embed of (B,1,num_tokens,token_dim) = [16,1,16,768]
         prompt_embed = torch.cat(inps["prompt_embed"], 1)
         y = torch.cat(inps["y"], 1)  
 
         # STEP: Calculate loss using get_loss
-        y_pred = self.model(X, prompt_embeds=prompt_embed)
+        y_pred = self(X, prompt_embeds=prompt_embed)
         loss = self.get_loss(y_pred, y)
         # STEP: Calculate accuracy
         acc = get_acc(y_pred, y)
@@ -248,7 +266,7 @@ class PromptedViTResampler(PromptedViTBackbone):
         y = torch.cat(inps["y"], 1)
         prompts = torch.cat(inps["prompt_embed"], 1)
 
-        y_pred = self.model(X, prompt_embeds=prompts)
+        y_pred = self(X, prompt_embeds=prompts)
         loss = self.get_loss(y_pred, y).item()
         acc = get_acc(y_pred, y)
 
@@ -277,3 +295,29 @@ class PromptedViTResampler(PromptedViTBackbone):
             self.test_outputs['acc'].append(acc)
             if len(incorrect_samples) > 0:
                 self.test_outputs['incorrect_samples'] = self.test_outputs['incorrect_samples'] + incorrect_samples        
+
+    
+    def configure_optimizers(self):
+
+        lr = self.learning_rate
+        params = list(self.parameters())
+        if self.use_prompt_embed_model:
+            params += list(self.prompt_embed_model.parameters())
+        opt = torch.optim.AdamW(params, lr)
+
+        if self.use_scheduler:
+            metric_monitored = self.scheduler_config.get("monitor", "val/loss")
+            if "monitor" in self.scheduler_config:
+                del self.scheduler_config["monitor"]
+            self.lr_scheduler = ReduceLROnPlateau(opt, **self.scheduler_config)
+
+            return {
+                "optimizer": opt,
+                "lr_scheduler": {
+                    "scheduler": self.lr_scheduler,
+                    "monitor": metric_monitored,
+                    "interval": "epoch",
+                    "frequency": 1,
+                }
+            }
+        return opt

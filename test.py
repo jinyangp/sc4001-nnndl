@@ -6,9 +6,9 @@ from omegaconf import OmegaConf
 from torch import nn
 import pytorch_lightning as pl
 from torch.utils.data import DataLoader
-from pytorch_lightning.callbacks import ModelCheckpoint, Callback, LearningRateMonitor
-from pytorch_lightning.loggers import TensorBoardLogger
+
 from src.util import create_model, load_state_dict, instantiate_from_config
+from src.data.dataloader import custom_collate_fn
 
 def main(args):
 
@@ -33,7 +33,7 @@ def main(args):
 
     # data
     test_dataset = instantiate_from_config(config.dataset.test)
-    test_dataloader = DataLoader(test_dataset, num_workers=num_workers, batch_size=batch_size, shuffle=False, pin_memory=True)
+    test_dataloader = DataLoader(test_dataset, num_workers=num_workers, batch_size=batch_size, collate_fn=custom_collate_fn, shuffle=False, pin_memory=True)
     trainer = pl.Trainer(
                         strategy="ddp",
                         accelerator="gpu", devices=gpus, 
