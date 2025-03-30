@@ -44,3 +44,10 @@ dataset:
       data_files:
         - "./data/test_images.txt"
       dataset_split: "test"
+
+augmentation:
+  flip_prob: 0.5
+  crop_prob: 0.3
+  color_jitter_prob: 0.4
+  mixup_alpha: 0.4
+
