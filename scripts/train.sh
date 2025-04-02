@@ -18,4 +18,6 @@ mkdir -p $LOG_DIR
 module load anaconda 
 source activate base # ( this would activate your conda base env )
 conda activate sc4001
-python -u train.py --name=180325-expt1 --config=configs/vit_head_tuned_v1.yaml --gpus 0 --max_epochs=100 --batch_size=16 --grad_acc=2
+python -u train.py --name=vit_head_tuned_fewShot --config=configs/vit_head_tuned_v1.yaml --gpus 0 --max_epochs=100 --batch_size=16 --grad_acc=2
+
+

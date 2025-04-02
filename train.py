@@ -8,9 +8,19 @@ import pytorch_lightning as pl
 from torch.utils.data import DataLoader
 from pytorch_lightning.callbacks import ModelCheckpoint, Callback, LearningRateMonitor
 from pytorch_lightning.loggers import TensorBoardLogger
-
+import random
+import numpy as np
 from src.util import create_model, load_state_dict, instantiate_from_config
 from src.data.dataloader import custom_collate_fn
+
+# set seed for reproducibility
+def set_seed(seed=42):
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
 
 class SetupCallback(Callback):  
     def __init__(self, logdir, ckptdir, cfgdir, config):
@@ -40,6 +50,8 @@ class SetupCallback(Callback):
 
 
 def main(args):
+    # Set seed for reproducibility
+    set_seed(42)  
 
     model_config = args.config
     resume_path = args.resume_path
@@ -77,6 +89,8 @@ def main(args):
     # Instantiate datasets based on config
     dataset = instantiate_from_config(config.dataset.train)
     val_dataset = instantiate_from_config(config.dataset.val)
+    
+    # using custom collate function
     dataloader = DataLoader(dataset, num_workers=num_workers, batch_size=batch_size, collate_fn=custom_collate_fn, shuffle=True, pin_memory=True)
     val_dataloader = DataLoader(val_dataset, num_workers=num_workers, batch_size=batch_size, collate_fn=custom_collate_fn,  shuffle=True, pin_memory=True)
     # set to False if want to investigate repeated generation over the same image

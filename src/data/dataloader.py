@@ -52,6 +52,8 @@ class FlowersDataset(Loader):
                  sample_ratio=None,
                  # augmentation
                  augment_config=None,
+                 # no. of samples per class for few-shot learning
+                 few_shot_k = None,
                  **kwargs):  # Pass through shuffle, etc.
 
         super().__init__(**kwargs)
@@ -68,17 +70,29 @@ class FlowersDataset(Loader):
         df = pd.concat(dfs, ignore_index=True)
         df["label"] = df["label"].astype(int)
 
+        # Few-shot sampling: sample only K examples per class if few_shot_k is given
+        if few_shot_k:
+            df = df.groupby("label", group_keys=False).apply(
+                lambda x: x.sample(n=min(few_shot_k, len(x)), random_state=42)
+            ).reset_index(drop=True)
+    
         if sample_ratio:
             df = df.head(int(sample_ratio * len(df)))
 
         self.num_classes = df['label'].nunique()
 
-        # Duplicate dataset: Original and Augmented
-        df_aug = df.copy()
-        df_aug["augmented"] = True
-        df["augmented"] = False
-        # dataframe is doubled
-        self.df = pd.concat([df, df_aug], ignore_index=True).sample(frac=1).reset_index(drop=True)
+        # Only duplicate dataset if augmentations are enabled
+        if self.augmentation_pipeline.enabled:
+            # Duplicate dataset: Original and Augmented
+            df_aug = df.copy()
+            df_aug["augmented"] = True
+            df["augmented"] = False
+            # dataframe is doubled
+            self.df = pd.concat([df, df_aug], ignore_index=True).sample(frac=1).reset_index(drop=True)
+        else:
+            # If augmentation is disabled, don't duplicate
+            df["augmented"] = False 
+            self.df = df.sample(frac=1).reset_index(drop=True)
 
     def __len__(self):
         return len(self.df)

@@ -27,6 +27,8 @@ dataset:
       data_files:
         - "./data/train_images.txt"
       dataset_split: "train"
+      # set to None for no few shot training, or set to a number for few shot training
+      few_shot_k: 5
 
   val:
     target: src.data.dataloader.FlowersDataset
@@ -45,3 +47,13 @@ dataset:
       data_files:
         - "./data/test_images.txt"
       dataset_split: "test"
+
+augmentation:
+  # set to True for data augmentation, False for no data augmentation
+  enabled: False
+  #set to 'single' for single augmentation, 'multi' for multi augmentation
+  mode: "multi"
+  flip_prob: 0.5
+  crop_prob: 0.5
+  color_jitter_prob: 0.5
+  mixup_alpha: 0.4
