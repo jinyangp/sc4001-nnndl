@@ -19,7 +19,9 @@ class AugmentationPipeline:
 
        # Final standard conversion and normalization
         self.to_tensor = transforms.ToTensor()
-        self.normalize = transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
+        self.normalise_means = [0.485, 0.456, 0.406]
+        self.normalise_stdev = [0.229, 0.224, 0.225]
+        self.normalize = transforms.Normalize(self.normalise_means, self.normalise_stdev)
 
     def apply(self, image):
         # Apply each augmentation based on config probabilities
@@ -41,6 +43,17 @@ class AugmentationPipeline:
         image = self.normalize(image)
 
         return image
+    
+    def get_pil(self, img_tensor):
+        '''
+        Receives an image tensor and inverses the transformation to get back a PIL image.
+        '''
+        img_tensor = img_tensor * torch.tensor(self.normalise_stdev).view(-1, 1, 1)
+        img_tensor = img_tensor + torch.tensor(self.normalise_means).view(-1, 1, 1)
+        img_tensor = torch.clamp(img_tensor, min=0., max=1.)
+        img_pil = transforms.ToPILImage()(img_tensor)
+        return img_pil
+            
 
     def mixup(self, image1, label1, image2, label2):
         # MixUp performed using beta distribution
