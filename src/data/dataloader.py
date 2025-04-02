@@ -105,6 +105,7 @@ class FlowersDataset(Loader):
             label = label.transpose(0,1).squeeze(1).float()
  
             return dict(image=image,
+                        image_pil=img_pil,
                         label=label,
                         fns=fname)
         
@@ -112,3 +113,20 @@ class FlowersDataset(Loader):
             print(f"Skipping index {index}", e)
             #sys.exit()
             return self.skip_sample(index)
+        
+   
+def custom_collate_fn(batch):
+    
+    collated_batch = {}
+    
+    for key in batch[0].keys():
+        if key == "image_pil":
+            # Handle seg_img_pil: collect PIL images or None
+            collated_batch[key] = [sample[key] for sample in batch]
+        else:
+            # For other keys, stack tensors
+            collated_batch[key] = [sample[key] for sample in batch]
+            if isinstance(collated_batch[key][0], torch.Tensor):
+                collated_batch[key] = torch.stack(collated_batch[key])  # Stack tensors
+    
+    return collated_batch
