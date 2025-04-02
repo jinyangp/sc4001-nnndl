@@ -89,16 +89,19 @@ class FlowersDataset(Loader):
             img_fp, label, is_aug = row['img_fp'], row['label'], row['augmented']
             fname = get_name(img_fp, label)
             img_pil = Image.open(os.path.join(self.root, img_fp)).convert("RGB")
+            return_img_pil = img_pil # NOTE: we need to return a PIL of the image too
 
             # Only on train and augmented samples
             if self.dataset_split == 'train' and is_aug:
                 # Apply augmentations
                 image = self.augmentation_pipeline.apply(img_pil)
+                return_img_pil = self.augmentation_pipeline.get_pil(image)
             else:
                 # Resize and normalize all non-augmented samples to ensure consistency
                 img_pil = transforms.Resize((224, 224))(img_pil)
                 image = self.augmentation_pipeline.to_tensor(img_pil)
                 image = self.augmentation_pipeline.normalize(image)
+                return_img_pil = self.augmentation_pipeline.get_pil(image)
             
             label = F.one_hot(torch.tensor(int(label)), num_classes=self.num_classes).float()
 
@@ -116,15 +119,34 @@ class FlowersDataset(Loader):
                 
                 # MixUp
                 image, label = self.augmentation_pipeline.mixup(image, label, image2, label2)
+                return_img_pil = self.augmentation_pipeline.get_pil(image)
 
-            return {
-                "image": image,
-                "label": label,
-                # extra info
-                "fns": fname,
-                "augmented": is_aug
-            }
+            # TODO: Need to get back PIL image of augmented sample
+            # TODO: Need to handle tthis for each type of augmentation
+            return dict(image=image,
+                    image_pil=return_img_pil,
+                    label=label,
+                    # extra info
+                    fns=fname,
+                    augmented=is_aug)
 
         except Exception as e:
             print(f"Skipping index {index} due to error: {e}")
             return self.skip_sample(index)
+
+
+def custom_collate_fn(batch):
+    
+    collated_batch = {}
+    
+    for key in batch[0].keys():
+        if key == "image_pil":
+            # Handle seg_img_pil: collect PIL images or None
+            collated_batch[key] = [sample[key] for sample in batch]
+        else:
+            # For other keys, stack tensors
+            collated_batch[key] = [sample[key] for sample in batch]
+            if isinstance(collated_batch[key][0], torch.Tensor):
+                collated_batch[key] = torch.stack(collated_batch[key])  # Stack tensors
+    
+    return collated_batch

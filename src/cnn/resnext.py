@@ -3,19 +3,18 @@ import torchvision
 import torch.nn as nn
 import numpy as np
 import pytorch_lightning as pl
-from einops import rearrange, repeat
-from torch.optim.lr_scheduler import LambdaLR, ReduceLROnPlateau
+from torch.optim.lr_scheduler import ReduceLROnPlateau
 from collections import defaultdict
 
 from src.metrics import get_acc
 from src.util import instantiate_from_config
 
-class ViT(pl.LightningModule):
+class ResNeXt50Model(pl.LightningModule):
 
     def __init__(self,
                  pretrained_model_weights: str,
-                 finetuned_keys: list[str],
-                 loss_type: str ='cross_entropy',
+                 finetuned_keys: list[str] = None,
+                 loss_type: str = 'cross_entropy',
                  num_classes: int = 102,
                  scheduler_config=None,
                  *args,
@@ -24,57 +23,58 @@ class ViT(pl.LightningModule):
         
         '''
         Args:
-            pretrained_model_ckpt: str, filepath to the checkpoint file
-            finetuned_keys:
+            pretrained_model_weights: str
+            finetuned_keys: list of strings representing layer names to finetune
+            num_classes: number of classes in the dataset
         '''
-
         super().__init__()
 
         self.num_classes = num_classes  
-        self.init_from_ckpt(pretrained_model_weights,
-                            finetuned_keys=finetuned_keys)
         self.loss_type = loss_type    
         self.use_scheduler = scheduler_config is not None
         if self.use_scheduler:
             self.scheduler_config = scheduler_config
 
-        # NOTE: to store output of batches in test
+        # Initialize model
+        self.init_from_ckpt(pretrained_model_weights, finetuned_keys=finetuned_keys)
+
+        # Storage for outputs during validation and testing
         self.test_outputs = None
         self.validation_outputs = None
 
 
-    def init_from_ckpt(self,
-                       path,
-                       finetuned_keys:list[str] = None,
-                       ):
-        
+    def init_from_ckpt(self, path, finetuned_keys:list[str] = None):
         '''
         Args:
-            path: str, path to checkpoint file
-            ignore_keys: list of keys to ignore
+            path: str, path to checkpoint file or name of pretrained weights
             finetuned_keys: list of keys to finetune
         '''
-
-        # STEP: Load pretrained weights
-        self.model = torchvision.models.vit_b_16(weights=path)
+        # Load pretrained ResNeXt50
+        self.model = torchvision.models.resnext50_32x4d(weights=path)
         
-        # STEP: Fine-tune all selected keys
-        for name, param in self.model.named_parameters():
-            for ftk in finetuned_keys:
-                if ftk in name:
-                    param.requires_grad = True
-                else:
-                    param.requires_grad = False
-
-        # STEP: Modify head to fit our number of classes
-        num_ftrs = self.model.heads.head.in_features
-        self.model.heads.head = nn.Linear(num_ftrs, self.num_classes)
+        # Freeze or unfreeze parameters based on finetuned_keys
+        if finetuned_keys:
+            for name, param in self.model.named_parameters():
+                param.requires_grad = False  # Freeze all parameters by default
+                
+                # Unfreeze parameters that contain any of the finetuned_keys
+                for key in finetuned_keys:
+                    if key in name:
+                        param.requires_grad = True
+                        break
+        
+        # Modify the final fully connected layer to match our number of classes
+        num_ftrs = self.model.fc.in_features
+        self.model.fc = nn.Linear(num_ftrs, self.num_classes)
+        
+        # Always make sure the final layer is trainable
+        for param in self.model.fc.parameters():
+            param.requires_grad = True
 
 
     def get_loss(self, pred, target, reduction="mean"):
         if self.loss_type == "cross_entropy":
-            # pred: torch.Size([16, 1000]), target: torch.Size([16, 102]) but currently torch.Size([16, 1, 102]
-            loss = torch.nn.functional.cross_entropy(pred,target,reduction=reduction)
+            loss = torch.nn.functional.cross_entropy(pred, target, reduction=reduction)
         return loss
      
     
@@ -118,7 +118,6 @@ class ViT(pl.LightningModule):
 
 
     def test_step(self, batch, batch_idx):
-                
         inps = self.get_input(batch)
         X, y, fns = inps['X'], inps['y'], inps['fn'][0]
         X = torch.cat(inps["X"], 1)
@@ -156,7 +155,6 @@ class ViT(pl.LightningModule):
 
     # ======================================
     def get_input(self, batch, bs=None):
-
         if bs is not None:
             for k in batch.keys():
                 batch[k] = batch[k][:bs]
@@ -166,20 +164,19 @@ class ViT(pl.LightningModule):
         
 
     def shared_step(self, batch):
-
         loss_dict = {}
         
-        # STEP: Get the inputs from the batches
+        # Get the inputs from the batches
         inps = self.get_input(batch)
         X = torch.cat(inps["X"], 1)
         y = torch.cat(inps["y"], 1)
 
-        # STEP: Calculate loss using get_loss
+        # Calculate loss using get_loss
         y_pred = self.model(X)
         loss = self.get_loss(y_pred, y)
-        # STEP: Calculate accuracy
+        # Calculate accuracy
         acc = get_acc(y_pred, y)
-        # STEP: Log the items
+        # Log the items
         log_prefix = "train" if self.training else "val"
 
         loss_dict.update({f'{log_prefix}/loss': loss})
@@ -199,7 +196,6 @@ class ViT(pl.LightningModule):
 
 
     def on_validation_epoch_end(self):
-
         """Aggregates validation losses and logs epoch-level metrics."""
         outputs = self.validation_outputs
         num_batches = len(outputs)
@@ -208,11 +204,10 @@ class ViT(pl.LightningModule):
         if self.use_scheduler:
             self.lr_scheduler.step(avg_val_loss)
     
-        self.validation_outputs = None # resets the output to None for next epoch
+        self.validation_outputs = None  # resets the output to None for next epoch
 
 
     def on_test_epoch_end(self):
-
         outputs = self.test_outputs
         print(outputs)
 
