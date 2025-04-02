@@ -12,6 +12,8 @@ from einops import rearrange
 import json
 import re
 import pandas as pd
+import torch.nn.functional as F
+from src.data.augmentations import AugmentationPipeline
 
 from torchvision import transforms
 from random import randint
@@ -42,79 +44,97 @@ class Loader(Dataset):
         pass
 
 class FlowersDataset(Loader):
-
     def __init__(self,
                  image_root,
                  image_dir,
-                 data_files:list,
-                 dataset_split:str='train',
-                 sample_ratio=None, # ratio of entire dataset to sample from
-                 **kwargs
-                 ):
-        
-        super().__init__(**kwargs)
-        
-        self.root = Path(image_root)
-        self.image_root = self.root/image_dir
+                 data_files: list,
+                 dataset_split: str = 'train',
+                 sample_ratio=None,
+                 # augmentation
+                 augment_config=None,
+                 **kwargs):  # Pass through shuffle, etc.
 
+        super().__init__(**kwargs)
+
+        self.root = Path(image_root)
+        self.image_root = self.root / image_dir
+        self.dataset_split = dataset_split
+        # Init augmentation pipeline
+        self.augmentation_pipeline = AugmentationPipeline(augment_config or {})
+
+        # Load CSVs
         data_columns = ["img_fp", "label"]
         dfs = [pd.read_csv(f, names=data_columns, header=None) for f in data_files]
-        self.df = pd.concat(dfs, ignore_index=True)
-        self.df["label"] = self.df["label"].astype(int)
+        df = pd.concat(dfs, ignore_index=True)
+        df["label"] = df["label"].astype(int)
 
         if sample_ratio:
-            self.df = self.df.head(int(sample_ratio*len(self.df)))
-        
-        self.num_classes = self.df['label'].nunique()
-        self.dataset_split = dataset_split
-        self.data_transforms = {
-            'train': transforms.Compose([
-                transforms.RandomResizedCrop(224),
-                transforms.RandomHorizontalFlip(),
-                transforms.ToTensor(),
-                transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
-            ]),
-            'val': transforms.Compose([
-                transforms.Resize(256),
-                transforms.CenterCrop(224),
-                transforms.ToTensor(),
-                transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
-            ]),
-            'test': transforms.Compose([
-            transforms.Resize(256),
-            transforms.CenterCrop(224),
-            transforms.ToTensor(),
-            transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
-            ])
-        }
+            df = df.head(int(sample_ratio * len(df)))
+
+        self.num_classes = df['label'].nunique()
+
+        # Duplicate dataset: Original and Augmented
+        df_aug = df.copy()
+        df_aug["augmented"] = True
+        df["augmented"] = False
+        # dataframe is doubled
+        self.df = pd.concat([df, df_aug], ignore_index=True).sample(frac=1).reset_index(drop=True)
 
     def __len__(self):
         return len(self.df)
-    
+
     def __getitem__(self, index):
-        
         try:
             row = self.df.iloc[index]
-            img_fp, label = row['img_fp'], row['label']
-            fname = get_name(img_fp,label)
+            img_fp, label, is_aug = row['img_fp'], row['label'], row['augmented']
+            fname = get_name(img_fp, label)
+            img_pil = Image.open(os.path.join(self.root, img_fp)).convert("RGB")
+            return_img_pil = img_pil # NOTE: we need to return a PIL of the image too
 
-            img_pil = Image.open(os.path.join(self.root, img_fp))
-            image = self.data_transforms[self.dataset_split](img_pil)
-            # NOTE: we make a one-hot encoded vector here
-            label = torch.nn.functional.one_hot(torch.tensor([label]), num_classes=self.num_classes)
-            label = label.transpose(0,1).squeeze(1).float()
- 
+            # Only on train and augmented samples
+            if self.dataset_split == 'train' and is_aug:
+                # Apply augmentations
+                image = self.augmentation_pipeline.apply(img_pil)
+                return_img_pil = self.augmentation_pipeline.get_pil(image)
+            else:
+                # Resize and normalize all non-augmented samples to ensure consistency
+                img_pil = transforms.Resize((224, 224))(img_pil)
+                image = self.augmentation_pipeline.to_tensor(img_pil)
+                image = self.augmentation_pipeline.normalize(image)
+                return_img_pil = self.augmentation_pipeline.get_pil(image)
+            
+            label = F.one_hot(torch.tensor(int(label)), num_classes=self.num_classes).float()
+
+            # Apply MixUp (only on augmented training samples)
+            if self.dataset_split == 'train' and self.augmentation_pipeline.mixup_alpha > 0 and is_aug:
+                # Get another sample
+                rand_idx = randint(0, self.__len__() - 1)
+                row2 = self.df.iloc[rand_idx]
+                img_fp2, label2 = row2['img_fp'], row2['label']
+                img_pil2 = Image.open(os.path.join(self.root, img_fp2)).convert("RGB")
+                
+                # Apply augmentations
+                image2 = self.augmentation_pipeline.apply(img_pil2)
+                label2 = F.one_hot(torch.tensor(int(label2)), num_classes=self.num_classes).float()
+                
+                # MixUp
+                image, label = self.augmentation_pipeline.mixup(image, label, image2, label2)
+                return_img_pil = self.augmentation_pipeline.get_pil(image)
+
+            # TODO: Need to get back PIL image of augmented sample
+            # TODO: Need to handle tthis for each type of augmentation
             return dict(image=image,
-                        image_pil=img_pil,
-                        label=label,
-                        fns=fname)
-        
-        except Exception as e:            
-            print(f"Skipping index {index}", e)
-            #sys.exit()
+                    image_pil=return_img_pil,
+                    label=label,
+                    # extra info
+                    fns=fname,
+                    augmented=is_aug)
+
+        except Exception as e:
+            print(f"Skipping index {index} due to error: {e}")
             return self.skip_sample(index)
-        
-   
+
+
 def custom_collate_fn(batch):
     
     collated_batch = {}

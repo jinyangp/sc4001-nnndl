@@ -62,8 +62,19 @@ def main(args):
     model.learning_rate = learning_rate
 
     config = OmegaConf.load(model_config)
+    
+    # extract augmentations from YAML
+    augment_config = config.get("augmentation", {})
 
-    # data
+    # Load dataset configurations
+    train_params = config.dataset.train.params
+    val_params = config.dataset.val.params
+
+    # Add augmentations settings to data params
+    train_params["augment_config"] = augment_config
+    val_params["augment_config"] = augment_config  # optional; won't apply aug anyway
+
+    # Instantiate datasets based on config
     dataset = instantiate_from_config(config.dataset.train)
     val_dataset = instantiate_from_config(config.dataset.val)
     dataloader = DataLoader(dataset, num_workers=num_workers, batch_size=batch_size, collate_fn=custom_collate_fn, shuffle=True, pin_memory=True)
