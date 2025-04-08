@@ -6,6 +6,11 @@ import numpy as np
 
 class AugmentationPipeline:
     def __init__(self, config):
+        
+        # Enable or disable augmentations
+        self.enabled = config.get("enabled", True)  
+        # apply multi or single augmentations
+        self.mode = config.get("mode", "multi") 
         # Load probabilities and hyperparameters from YAML config
         self.prob_flip = config.get("flip_prob", 0.5)
         self.prob_crop = config.get("crop_prob", 0.5)
@@ -24,16 +29,35 @@ class AugmentationPipeline:
         self.normalize = transforms.Normalize(self.normalise_means, self.normalise_stdev)
 
     def apply(self, image):
-        # Apply each augmentation based on config probabilities
+    
+        if not self.enabled:
+            # no augmentations applied, just convert to tensor and normalize
+            image = transforms.Resize((224, 224))(image)
+            image = self.to_tensor(image)
+            image = self.normalize(image)
+            return image
+        
+        # Multi: Apply all augmentations
+        if self.mode == "multi":
+            if random.random() < self.prob_flip:
+                image = self.flip_transform(image)
+            if random.random() < self.prob_crop:
+                image = self.crop_transform(image)
+            if random.random() < self.prob_color:
+                image = self.color_jitter(image)
 
-        if random.random() < self.prob_flip:
-            image = self.flip_transform(image)
-
-        if random.random() < self.prob_crop:
-            image = self.crop_transform(image)
-
-        if random.random() < self.prob_color:
-            image = self.color_jitter(image)
+        # Single: randomly choose one augmentation 
+        elif self.mode == "single":
+            augmentations = [
+                (self.flip_transform, self.prob_flip),
+                (self.crop_transform, self.prob_crop),
+                (self.color_jitter, self.prob_color)
+            ]
+            valid_transforms = [aug for aug, p in augmentations if random.random() < p]
+            if valid_transforms:
+                # Randomly choose one valid transform
+                chosen_transform = random.choice(valid_transforms)
+                image = chosen_transform(image)
 
         # Final resize to gurantee consistent shape for batching
         image = transforms.Resize((224, 224))(image)
@@ -51,11 +75,17 @@ class AugmentationPipeline:
         img_tensor = img_tensor * torch.tensor(self.normalise_stdev).view(-1, 1, 1)
         img_tensor = img_tensor + torch.tensor(self.normalise_means).view(-1, 1, 1)
         img_tensor = torch.clamp(img_tensor, min=0., max=1.)
+        img_tensor = img_tensor.float()
         img_pil = transforms.ToPILImage()(img_tensor)
         return img_pil
             
 
     def mixup(self, image1, label1, image2, label2):
+        
+        if not self.enabled or self.mixup_alpha <= 0:
+            # no MixUp applied, just return the original images and labels
+            return image1, label1
+        
         # MixUp performed using beta distribution
         lam = np.random.beta(self.mixup_alpha, self.mixup_alpha)
 
