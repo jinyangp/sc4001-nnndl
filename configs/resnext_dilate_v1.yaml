@@ -1,0 +1,47 @@
+model:
+  target: src.cnn.resnext_dilation.DilatedResNeXt50Model
+  params:
+    pretrained_model_weights: "IMAGENET1K_V1"
+    finetuned_keys:
+      - layer4
+      - fc
+    dilation_config: [False, False, True]
+    loss_type: "cross_entropy"
+    num_classes: 102
+    scheduler_config:
+      monitor: val/loss
+      mode: min
+      factor: 0.5
+      patience: 3
+      cooldown: 0
+      min_lr: 0.00001
+      threshold: 0.001
+      verbose: True
+
+dataset:
+  train:
+    target: src.data.dataloader.FlowersDataset
+    params:
+      image_root: "./data"
+      image_dir: "flowers-102"
+      data_files:
+        - "./data/train_images.txt"
+      dataset_split: "train"
+
+  val:
+    target: src.data.dataloader.FlowersDataset
+    params:
+      image_root: "./data"
+      image_dir: "flowers-102"
+      data_files:
+        - "./data/val_images.txt"
+      dataset_split: "val"
+
+  test:
+    target: src.data.dataloader.FlowersDataset
+    params:
+      image_root: "./data"
+      image_dir: "flowers-102"
+      data_files:
+        - "./data/test_images.txt"
+      dataset_split: "test"
