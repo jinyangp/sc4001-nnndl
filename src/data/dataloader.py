@@ -135,8 +135,6 @@ class FlowersDataset(Loader):
                 image, label = self.augmentation_pipeline.mixup(image, label, image2, label2)
                 return_img_pil = self.augmentation_pipeline.get_pil(image)
 
-            # TODO: Need to get back PIL image of augmented sample
-            # TODO: Need to handle tthis for each type of augmentation
             return dict(image=image,
                     image_pil=return_img_pil,
                     label=label,

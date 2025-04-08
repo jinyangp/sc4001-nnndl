@@ -1,6 +1,7 @@
 import random
 import torch
 from torchvision import transforms
+import torchvision.transforms.functional as TF
 from PIL import Image
 import numpy as np
 
@@ -20,13 +21,31 @@ class AugmentationPipeline:
         # Define each transformation
         self.flip_transform = transforms.RandomHorizontalFlip(p=1.0)  
         self.crop_transform = transforms.RandomCrop(224, padding=4)
-        self.color_jitter = transforms.ColorJitter(brightness=0.4, contrast=0.4, saturation=0.4, hue=0.1)
 
        # Final standard conversion and normalization
         self.to_tensor = transforms.ToTensor()
         self.normalise_means = [0.485, 0.456, 0.406]
         self.normalise_stdev = [0.229, 0.224, 0.225]
         self.normalize = transforms.Normalize(self.normalise_means, self.normalise_stdev)
+
+    def _apply_jitter(self, image):
+        
+        # Apply all colour alterations except for hue
+        colour_jitter = transforms.ColorJitter(
+            brightness=0.4,
+            contrast=0.4,
+            saturation=0.4,
+            hue=0  # We'll handle hue separately
+        )
+        image = colour_jitter(image)
+        
+        image_tensor = TF.pil_to_tensor(image).float() / 255.0 
+        # Manually apply hue jitter (clamped to [-0.5, 0.5])
+        hue_factor = random.uniform(-0.1, 0.1)
+        hue_factor = max(min(hue_factor, 0.5), -0.5)
+        image = TF.adjust_hue(image_tensor, hue_factor) # apply this on tensor to prevent overflow
+        image = TF.to_pil_image(image_tensor)
+        return image
 
     def apply(self, image):
     
@@ -44,7 +63,7 @@ class AugmentationPipeline:
             if random.random() < self.prob_crop:
                 image = self.crop_transform(image)
             if random.random() < self.prob_color:
-                image = self.color_jitter(image)
+                image = self._apply_jitter(image)
 
         # Single: randomly choose one augmentation 
         elif self.mode == "single":
