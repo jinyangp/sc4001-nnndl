@@ -1,0 +1,58 @@
+model:
+  target: src.cnn.densenet.DenseNet121Model
+  params:
+    pretrained_model_weights: "IMAGENET1K_V1"
+    dilation: 2
+    finetuned_keys: # keep adding all keys to be fine-tuned, each on a different line starting with '-'
+      - features.denseblock4 # Final dense block
+      - classifier # Classifier instead of fc
+    loss_type: "cross_entropy"
+    num_classes: 102
+    use_scheduler: True
+    scheduler_config:
+      monitor: val/loss
+      mode: min
+      factor: 0.5
+      patience: 3
+      cooldown: 0
+      min_lr: 0.00001
+      threshold: 0.001
+      verbose: True
+
+dataset:
+  train:
+    target: src.data.dataloader.FlowersDataset
+    params:
+      image_root: "./data"
+      image_dir: "flowers-102"
+      data_files:
+        - "./data/train_images.txt"
+      dataset_split: "train"
+
+  val:
+    target: src.data.dataloader.FlowersDataset
+    params:
+      image_root: "./data"
+      image_dir: "flowers-102"
+      data_files:
+        - "./data/val_images.txt"
+      dataset_split: "val"
+
+  test:
+    target: src.data.dataloader.FlowersDataset
+    params:
+      image_root: "./data"
+      image_dir: "flowers-102"
+      data_files:
+        - "./data/test_images.txt"
+      dataset_split: "test"
+
+augmentation:
+  # set to True for data augmentation, False for no data augmentation
+  enabled: False
+  #set to 'single' for single augmentation, 'multi' for multi augmentation
+  mode: "multi"
+  flip_prob: 0.5
+  crop_prob: 0.5
+  color_jitter_prob: 0.5
+  mixup_alpha: 0.4
