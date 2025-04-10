@@ -5,7 +5,7 @@ model:
     finetuned_keys: # keep adding all keys to be fine-tuned, each on a different line starting with '-'
       - layer4
       - fc
-    dilation_config: [False, False, True]
+    dilation_rates: [1, 1, 2] # Sets dilation rate of 1, 1 and 2 for layer 2, 3 and 4 respectively
     loss_type: "cross_entropy"
     num_classes: 102
     use_scheduler: True
@@ -46,3 +46,13 @@ dataset:
       data_files:
         - "./data/test_images.txt"
       dataset_split: "test"
+
+augmentation:
+  # set to True for data augmentation, False for no data augmentation
+  enabled: False
+  #set to 'single' for single augmentation, 'multi' for multi augmentation
+  mode: "multi"
+  flip_prob: 0.5
+  crop_prob: 0.5
+  color_jitter_prob: 0.5
+  mixup_alpha: 0.4

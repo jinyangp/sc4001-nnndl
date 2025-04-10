@@ -10,21 +10,32 @@ from torchvision.models.resnet import ResNet, Bottleneck
 from src.metrics import get_acc
 from src.util import instantiate_from_config
 
-def create_dilated_resnext50(replace_stride_with_dilation=None):
-    """Create a ResNeXt50 with dilated convolutions"""
-    if replace_stride_with_dilation is None:
-        replace_stride_with_dilation = [False, False, True]
+def create_dilated_resnext50(dilation_rates=None):
+    """Create a ResNeXt50 with configurable dilation rates"""
+    # Convert dilation rates to boolean flags for replace_stride_with_dilation
+    if dilation_rates is None:
+        dilation_rates = [1, 1, 2]  # Default: dilate the last layer with rate 2
+    
+    replace_stride_with_dilation = [rate > 1 for rate in dilation_rates]
     
     # Use groups=32 and width_per_group=4 for ResNeXt50_32x4d
     model = ResNet(
-        block=Bottleneck, 
+        block=Bottleneck,
         layers=[3, 4, 6, 3],
         groups=32,
         width_per_group=4,
         replace_stride_with_dilation=replace_stride_with_dilation
     )
+    
+    # Apply dilation rates to all blocks in requested layer
+    layers = [model.layer2, model.layer3, model.layer4]
+    for i, layer in enumerate(layers):
+        if dilation_rates[i] > 1:
+            for block in layer:
+                block.conv2.dilation = (dilation_rates[i],) * 2
+                block.conv2.padding = (dilation_rates[i],) * 2
+    
     return model
-
 
 class DilatedResNeXt50Model(pl.LightningModule):
     def __init__(self,
@@ -32,48 +43,45 @@ class DilatedResNeXt50Model(pl.LightningModule):
                  finetuned_keys: list[str] = None,
                  loss_type: str = 'cross_entropy',
                  num_classes: int = 102,
-                 dilation_config: list = None,
+                 dilation_rates: list = None,
                  scheduler_config=None,
                  *args,
                  **kwargs
-                 ):
-        
+                ):
         '''
         Args:
             pretrained_model_weights: str - Path to checkpoint or pretrained weights name
             finetuned_keys: list of strings representing layer names to finetune
             loss_type: str - Type of loss function to use
             num_classes: int - Number of output classes (102 for Oxford Flowers)
-            dilation_config: list - List of 3 booleans for dilation in layers 2-4
+            dilation_rates: list - List of 3 integers for dilation rates in layers 2-4
             scheduler_config: dict - Configuration for learning rate scheduler
         '''
         super().__init__()
-
-        self.num_classes = num_classes  
-        self.loss_type = loss_type    
+        self.num_classes = num_classes
+        self.loss_type = loss_type
         self.use_scheduler = scheduler_config is not None
         if self.use_scheduler:
             self.scheduler_config = scheduler_config
         
-        # Set default dilation config if not provided
-        if dilation_config is None:
-            self.dilation_config = [False, False, True]  # Only dilate layer4
+        # Set default dilation rates if not provided
+        if dilation_rates is None:
+            self.dilation_rates = [1, 1, 2]  # Default: dilate the last layer with rate 2
         else:
-            self.dilation_config = dilation_config
-
+            self.dilation_rates = dilation_rates
+        
         # Initialize model
         self.init_from_ckpt(pretrained_model_weights, finetuned_keys=finetuned_keys)
-
+        
         # Storage for outputs during validation and testing
         self.test_outputs = None
         self.validation_outputs = None
-
 
     def init_from_ckpt(self, path, finetuned_keys:list[str] = None):
         '''
         Initialize the model and load pretrained weights
         '''
-        self.model = create_dilated_resnext50(replace_stride_with_dilation=self.dilation_config)
+        self.model = create_dilated_resnext50(dilation_rates=self.dilation_rates)
         
         # Load pretrained weights
         state_dict = torchvision.models.ResNeXt50_32X4D_Weights[path].get_state_dict(progress=True)
