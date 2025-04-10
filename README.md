@@ -45,8 +45,8 @@ Specifically, our project explored ResNet-101, ResNeXt-50-32x4d, DenseNet-121 an
 | Resampled Prompted ViT  | Shallow | 4                       | 15/500         | 1                | 0.9961          |
 | Resampled Prompted ViT  | Deep    | 4                       | 7/250          | **1**            | **0.9963**      |
 
-### Models with Data Augmentation 
-| Models                         | FewShot | Augmentation? | Epochs / Steps | Train Accuracy | Test Accuracy |
+### Few-Shot Learning with Data Augmentation
+| Models                         | FewShot | Augmented | Epochs / Steps | Train Accuracy | Test Accuracy |
 |:------------------------------:|:---------:|:-----------:|:--------------:|:--------------:|:-------------:|
 | Fine-tuned ViT                 | 5         | No          | 93/1500        | 1              | 0.7331        |
 | Fine-tuned ViT                 | 5         | Yes         | 93/3000        | 0.938          | 0.7974        |
