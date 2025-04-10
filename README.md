@@ -48,19 +48,19 @@ Specifically, our project explored ResNet-101, ResNeXt-50-32x4d, DenseNet-121 an
 ### Few-Shot Learning with Data Augmentation
 | Models                         | FewShot | Augmented | Epochs / Steps | Train Accuracy | Test Accuracy |
 |:------------------------------:|:---------:|:-----------:|:--------------:|:--------------:|:-------------:|
-| Fine-tuned ViT                 | 5         | No          | 93/1500        | 1              | 0.7331        |
+| Fine-tuned ViT                 | 5         | No          | 93/1500        | 0.982          | 0.7331        |
 | Fine-tuned ViT                 | 5         | Yes         | 93/3000        | 0.938          | 0.7974        |
 | Fine-tuned ViT                 | 10      	 | Yes         | 97/6250        | 0.939          | 0.8805        | 
-| DenseNet                       | 5         | No          | 62/1000        | 1              | 0.8235        | 	  
-| DenseNet                       | 5         | Yes         | 46/1500        | 0.9549         | 0.8467        |      
-| DenseNet                       | 5         | Yes         | 46/1500        | 0.9549         | 0.8467        |   
-|  | 5         | No          |        |               |       |   
-|  | 5         | Yes         |        |        |        |
+| DenseNet                       | 5         | No          | 62/1000        | 0.984          | 0.8235        | 	  
+| DenseNet                       | 5         | Yes         | 46/1500        | 0.952          | 0.8467        |      
+| ResNet-101                     | 5         | No          | 93/1500        | 0.995          | 0.8299        |   
+| ResNet-101                     | 5         | Yes         | 54/1750        | 0.959          | 0.8413        |   
 | Resampled Prompted Shallow ViT | 5         | No          | 15/250         | 1              | 0.9911        |   
 | Resampled Prompted Shallow ViT | 5         | Yes         | 39/1250        | 0.9686         | 0.9932        |
    
 ## Conclusion
-
+ In cases where compute resource and low latency is required, CNN models may be a more appropriate choice, albeit the probability of misclassification increases. Otherwise, the Resampled Prompted Shallow ViT outperforms the other candidate models significantly and may be preferred in high-stakes situations where misclassifications are costly.
+ 
 # Running the Project
 ## Installation
 This project can be run using Python 3.10.16.
