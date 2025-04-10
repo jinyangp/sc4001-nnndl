@@ -63,8 +63,20 @@ Specifically, our project explored ResNet-101, ResNeXt-50-32x4d, DenseNet-121 an
 
 # Running the Project
 ## Installation
-This project can be run using Python 3.12.
-<br> To install Python dependencies, run ```pip install -r requirements.txt``` </br>
+This project can be run using Python 3.10.16.
+
+First, create a conda env with:
+
+```
+conda create -n sc4001 python=3.10.16
+```
+
+Then, download the required dependencies with:
+
+```
+conda activate sc4001
+pip install -r requirements.txt
+```
 
 ## Project Structure
 The project is structured as follows:
